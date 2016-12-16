@@ -9,9 +9,20 @@ import (
 // source c code is at https://github.com/cloudwu/rudp
 
 const MaxPackageSize = (0x7fff - 4)
-const MTU = 128 //512
+
+const (
+	TypeIgnore = iota
+	TypeCorrupt
+	TypeRequest
+	TypeMissing
+	TypeNormal
+)
 
 type RUDP struct {
+	MTU         int // maximum transmission unit size, default 512
+	SendDelay   int
+	ExpiredTime int
+
 	sendQueue   messageQueue
 	recvQueue   messageQueue
 	sendHistroy messageQueue // keep message history in case we need to resend
@@ -19,17 +30,15 @@ type RUDP struct {
 	sendPackage *RUDPPackage // returned by rudp_update
 
 	freeList  *message // recyclable messages
-	sendAgain []int    // package id needs to send again
+	sendAgain []uint16 // package ids to send again
 
-	corrupt         int
+	corrupt         bool
 	currentTick     int
 	lastSendTick    int
 	lastExpiredTick int
-	sendID          int
-	recvIDMin       int
-	recvIDMax       int
-	sendDelay       int
-	expired         int
+	currentSendID   uint16
+	recvIDMin       uint16
+	recvIDMax       uint16
 }
 
 type RUDPPackage struct {
@@ -38,21 +47,13 @@ type RUDPPackage struct {
 	Size   int
 }
 
-func CreateRudp(sendDelay int, expiredTime int) *RUDP {
+func Create(sendDelay int, expiredTime int) *RUDP {
 	u := &RUDP{}
-	u.sendDelay = sendDelay
-	u.expired = expiredTime
-	u.sendAgain = make([]int, 0)
+	u.MTU = 512
+	u.SendDelay = sendDelay
+	u.ExpiredTime = expiredTime
+	u.sendAgain = make([]uint16, 0)
 	return u
-}
-
-func (u *RUDP) Delete() {
-	u.sendQueue.head = nil
-	u.recvQueue.head = nil
-	u.sendHistroy.head = nil
-	u.freeList = nil
-	u.sendAgain = nil
-	u.clearOutPackage()
 }
 
 // Send sends a new package out
@@ -62,8 +63,8 @@ func (u *RUDP) Send(buffer []byte, sz int) {
 		return
 	}
 	m := u.createMessage(buffer, sz)
-	u.sendID++
-	m.id = u.sendID
+	m.id = u.currentSendID
+	u.currentSendID++
 	m.tick = u.currentTick
 	u.sendQueue.push(m)
 }
@@ -72,8 +73,8 @@ func (u *RUDP) Send(buffer []byte, sz int) {
 // 0 = no new package
 // -1 = corrupt connection
 func (u *RUDP) Recv(buffer []byte) int {
-	if u.corrupt != 0 {
-		u.corrupt = 0
+	if u.corrupt {
+		u.corrupt = false
 		return -1
 	}
 	m := u.recvQueue.pop(u.recvIDMin)
@@ -98,11 +99,11 @@ func (u *RUDP) Update(received []byte, sz int, deltaTick int) *RUDPPackage {
 	u.clearOutPackage()
 	u.extractPackages(received, sz)
 
-	if u.currentTick >= u.lastExpiredTick+u.expired {
+	if u.currentTick >= u.lastExpiredTick+u.ExpiredTime {
 		u.clearSendExpired(u.lastExpiredTick)
 		u.lastExpiredTick = u.currentTick
 	}
-	if u.currentTick >= u.lastSendTick+u.sendDelay {
+	if u.currentTick >= u.lastSendTick+u.SendDelay {
 		u.sendPackage = u.genOutPackage()
 		u.lastSendTick = u.currentTick
 		return u.sendPackage
@@ -114,7 +115,7 @@ type message struct {
 	next   *message
 	buffer []byte
 	sz     int
-	id     int
+	id     uint16
 	tick   int
 }
 
@@ -133,7 +134,7 @@ func (q *messageQueue) push(m *message) {
 	}
 }
 
-func (q *messageQueue) pop(id int) *message {
+func (q *messageQueue) pop(id uint16) *message {
 	if q.head == nil {
 		return nil
 	}
@@ -202,32 +203,39 @@ func (u *RUDP) clearSendExpired(tick int) {
 }
 
 // TODO: understand and make sure this function works
-func (u *RUDP) getID(buffer []byte) int {
-	id := uint(binary.BigEndian.Uint16(buffer))
-	// max id is 64k, if over 64k, id is back to zero
-	id |= (uint(u.recvIDMax) & (^uint(0xffff)))
-	// if the diff of id is larger than 32K(0x8000), then adjust the id
-	if id < uint(u.recvIDMax)-0x8000 {
-		id += 0x10000
-	} else if id > uint(u.recvIDMax)+0x8000 {
-		id -= 0x10000
-	}
-	return int(id)
+func (u *RUDP) getID(buffer []byte) uint16 {
+	id := binary.BigEndian.Uint16(buffer)
+	/*
+		// if the diff of id is larger than 32K(0x8000), then adjust the id
+		var recvMaxID uint16 = uint16(u.recvIDMax)
+		if id > recvMaxID && id-recvMaxID > 0x8000 {
+			id -= 0x10000
+		} else if id < recvMaxID && recvMaxID-id > 0x8000 {
+
+		}
+		if id < uint(u.recvIDMax)-0x8000 {
+			id += 0x10000
+		} else if id > uint(u.recvIDMax)+0x8000 {
+			id -= 0x10000
+		}
+		return int(id)
+	*/
+	return id
 }
 
-func (u *RUDP) addRequest(id int) {
+func (u *RUDP) addRequest(id uint16) {
 	u.sendAgain = append(u.sendAgain, id)
 }
 
-func (u *RUDP) addMissing(id int) {
+func (u *RUDP) addMissing(id uint16) {
 	// TODO: understand this
-	u.insertMessage(id, nil, -1)
+	u.insertMessageToRecvQueue(id, nil, -1)
 }
 
-func (u *RUDP) insertMessage(id int, buffer []byte, sz int) {
+func (u *RUDP) insertMessageToRecvQueue(id uint16, buffer []byte, sz int) {
 	if id < u.recvIDMin {
 		fmt.Printf(
-			"Failed to insert msg with id %v as it's less than current min id.", id)
+			"Failed to insert msg with id %v as it's less than current min id.\n", id)
 		return
 	}
 	if id > u.recvIDMax || u.recvQueue.head == nil {
@@ -256,25 +264,17 @@ func (u *RUDP) insertMessage(id int, buffer []byte, sz int) {
 	}
 }
 
-const (
-	TypeIgnore = iota
-	TypeCorrupt
-	TypeRequest
-	TypeMissing
-	TypeNormalHeaderSize
-)
-
 func (u *RUDP) extractPackages(buffer []byte, sz int) {
 	for sz > 0 {
-		tag := uint(buffer[0])
+		tag := uint16(buffer[0])
 		// if tag is at [128, 32K], tag is 2 bytes
 		// otherwise tag is 1 byte
 		if tag > 127 {
 			if sz <= 1 {
-				u.corrupt = 1
+				u.corrupt = true
 				return
 			}
-			tag = uint(binary.BigEndian.Uint16(buffer)) & 0x7fff
+			tag = binary.BigEndian.Uint16(buffer)
 			buffer = buffer[2:]
 			sz -= 2
 		} else {
@@ -288,33 +288,35 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 				u.sendAgain = append(u.sendAgain, u.recvIDMin)
 			}
 		case TypeCorrupt:
-			u.corrupt = 1
+			u.corrupt = true
 			return
-		case TypeRequest:
-		case TypeMissing:
-			// | tag | id |
+		case TypeRequest, TypeMissing:
+			// | tag (1 byte) | id (2 bytes) |
 			if sz < 2 {
-				u.corrupt = 1
+				u.corrupt = true
 				return
 			}
 			id := u.getID(buffer)
 			if tag == TypeRequest {
+				fmt.Println("Request id ", id)
 				u.addRequest(id)
 			} else {
+				fmt.Println("Request missing ", id)
 				u.addMissing(id)
 			}
 			buffer = buffer[2:]
 			sz -= 2
 		default:
-			// | data length (2 bytes) | id (2 bytes) | data |
-			dataLength := int(tag - TypeNormalHeaderSize)
+			// | tag (1~2 bytes) | id (2 bytes) | data |
+			// data is at least 1 byte, so general msg's tag starts from 1
+			dataLength := int(tag - TypeNormal)
 			if sz < dataLength+2 {
-				u.corrupt = 1
+				u.corrupt = true
 				return
 			}
 			id := u.getID(buffer)
-			u.insertMessage(id, buffer[2:], dataLength)
-			buffer = buffer[2:]
+			u.insertMessageToRecvQueue(id, buffer[2:], dataLength)
+			buffer = buffer[dataLength+2:]
 			sz -= dataLength + 2
 		}
 	}
@@ -343,14 +345,14 @@ func (u *RUDP) createPackage(tmp *tmpBuffer) {
 }
 
 /*
-	1. request missing ( lookup U->recv_queue )
-	2. reply request ( U->send_again )
-	3. send message ( U->send_queue )
+	1. request missing ( lookup RUDP::recvQueue )
+	2. reply request ( RUDP::sendAgain )
+	3. send message ( RUDP::sendQueue )
 	4. send heartbeat
 */
 func (u *RUDP) genOutPackage() *RUDPPackage {
 	tmp := &tmpBuffer{}
-	tmp.buffer = make([]byte, MTU)
+	tmp.buffer = make([]byte, u.MTU)
 
 	u.requestMissing(tmp)
 	u.replyRequest(tmp)
@@ -399,7 +401,7 @@ func (u *RUDP) replyRequest(tmp *tmpBuffer) {
 		}
 	}
 
-	u.sendAgain = make([]int, 0)
+	u.sendAgain = make([]uint16, 0)
 }
 
 func (u *RUDP) sendMessage(tmp *tmpBuffer) {
@@ -421,8 +423,8 @@ func (u *RUDP) sendMessage(tmp *tmpBuffer) {
 	}
 }
 
-func (u *RUDP) packRequest(tmp *tmpBuffer, id int, tag int) {
-	sz := MTU - tmp.sz
+func (u *RUDP) packRequest(tmp *tmpBuffer, id uint16, tag int) {
+	sz := u.MTU - tmp.sz
 	if sz < 3 {
 		u.createPackage(tmp)
 	}
@@ -431,8 +433,8 @@ func (u *RUDP) packRequest(tmp *tmpBuffer, id int, tag int) {
 }
 
 func (u *RUDP) packMessage(tmp *tmpBuffer, m *message) {
-	sz := MTU - tmp.sz
-	if m.sz > MTU-4 {
+	sz := u.MTU - tmp.sz
+	if m.sz > u.MTU-4 {
 		if tmp.sz > 0 {
 			u.createPackage(tmp)
 		}
@@ -442,7 +444,7 @@ func (u *RUDP) packMessage(tmp *tmpBuffer, m *message) {
 		p.Next = nil
 		p.Buffer = make([]byte, sz)
 		p.Size = sz
-		u.fillHeader(p.Buffer, m.sz+TypeNormalHeaderSize, m.id)
+		u.fillHeader(p.Buffer, m.sz+TypeNormal, m.id)
 		copy(p.Buffer[4:], m.buffer[:m.sz])
 		if tmp.tail == nil {
 			tmp.head = p
@@ -457,19 +459,18 @@ func (u *RUDP) packMessage(tmp *tmpBuffer, m *message) {
 		u.createPackage(tmp)
 	}
 	buf := tmp.buffer[tmp.sz:]
-	length := u.fillHeader(buf, m.sz+TypeNormalHeaderSize, m.id)
+	length := u.fillHeader(buf, m.sz+TypeNormal, m.id)
 	tmp.sz += length + m.sz
 	copy(buf[length:], m.buffer[:m.sz])
 }
 
-func (u *RUDP) fillHeader(buffer []byte, length int, id int) int {
+func (u *RUDP) fillHeader(buffer []byte, length int, id uint16) int {
 	var sz int
 	if length < 128 {
 		buffer[0] = byte(length)
 		sz = 1
 	} else {
-		buffer[0] = byte(((length & 0x7f00) >> 8) | 0x80)
-		buffer[1] = byte(length & 0xff)
+		binary.BigEndian.PutUint16(buffer, uint16(length))
 		sz = 2
 	}
 	binary.BigEndian.PutUint16(buffer[sz:], uint16(id))
