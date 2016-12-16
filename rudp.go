@@ -11,17 +11,17 @@ import (
 const MaxPackageSize = (0x7fff - 4)
 
 const (
-	TypeHeartbeat = iota
-	TypeCorrupt
-	TypeRequest
+	TypeHeartbeat = iota // provider sends heartbeat to consumer to keep alive
+	TypeCorrupt          // abnormal corrupted message
+	TypeRequest          // consumer requests provider to resend message
 	TypeMissing
-	TypeNormal
+	TypeNormal // provider sends normal message to consumer
 )
 
 type RUDP struct {
 	MTU         int // maximum transmission unit size, default 512
-	SendDelay   int
-	ExpiredTime int
+	SendDelay   int // after how long we should send messages
+	ExpiredTime int // expired time that message in history should be cleared
 
 	sendQueue   messageQueue
 	recvQueue   messageQueue
@@ -154,6 +154,9 @@ func (u *RUDP) clearOutPackage() {
 	u.sendPackage = nil
 }
 
+// createMessage is called in following 2 cases
+// 1. when sending message, we create message and push to sendQueue
+// 2. when message received, we create messages and push to recvQueue
 func (u *RUDP) createMessage(buffer []byte, sz int) *message {
 	msg := u.freeList
 	if msg != nil {
@@ -274,7 +277,7 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 				u.corrupt = true
 				return
 			}
-			tag = binary.BigEndian.Uint16(buffer)
+			tag = binary.BigEndian.Uint16(buffer) - 0x8000
 			buffer = buffer[2:]
 			sz -= 2
 		} else {
@@ -300,7 +303,6 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 			if tag == TypeRequest {
 				u.addRequest(id)
 			} else {
-				fmt.Println("Request missing ", id)
 				u.addMissing(id)
 			}
 			buffer = buffer[2:]
@@ -469,7 +471,7 @@ func (u *RUDP) fillHeader(buffer []byte, length int, id uint16) int {
 		buffer[0] = byte(length)
 		sz = 1
 	} else {
-		binary.BigEndian.PutUint16(buffer, uint16(length))
+		binary.BigEndian.PutUint16(buffer, uint16(length)+0x8000)
 		sz = 2
 	}
 	binary.BigEndian.PutUint16(buffer[sz:], uint16(id))
