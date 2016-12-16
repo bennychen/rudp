@@ -1,52 +1,55 @@
 package rudp_test
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
 	"github.com/bennychen/rudp"
 )
 
-func dumpRecv(u *rudp.RUDP) {
-	tmp := make([]byte, rudp.MaxPackage)
+func dumpRecv(u *rudp.RUDP) string {
+	tmp := make([]byte, rudp.MaxPackageSize)
 	n := u.Recv(tmp)
+	str := ""
 	for n != 0 {
 		if n < 0 {
-			fmt.Println("CORRUPT")
+			str += "CORRUPT\n"
 			break
 		}
 
-		fmt.Println("RECV ")
+		str += "RECV "
 		for i := 0; i < n; i++ {
-			fmt.Println(tmp[i])
+			str += fmt.Sprintf("%v\n", tmp[i])
 		}
-		fmt.Println("")
 
 		n = u.Recv(tmp)
 	}
+	if str != "" {
+		fmt.Printf(str)
+	}
+	return str
 }
 
 var idx int = 0
 
 func dump(p *rudp.RUDPPackage) {
-	idx++
-	fmt.Printf("%v: ", idx)
+	fmt.Printf("%v: send ", idx)
 	for p != nil {
 		fmt.Printf("(")
 		for i := 0; i < p.Size; i++ {
 			fmt.Printf("%02x ", p.Buffer[i])
 		}
-		fmt.Printf(") ")
+		fmt.Printf(")")
 		p = p.Next
 	}
 	fmt.Printf("\n")
+	idx++
 }
 
-func TestRudp(t *testing.T) {
-	a := 0xaa
-	fmt.Printf("negation of %b = %b\n", a, ^uint(a))
-
-	U := rudp.CreateRudp(1, 5)
+func TestRUDP(t *testing.T) {
+	U := rudp.Create(1, 5)
+	U.MTU = 128
 
 	t1 := []byte{1, 2, 3, 4}
 	t2 := []byte{5, 6, 7, 8}
@@ -67,33 +70,106 @@ func TestRudp(t *testing.T) {
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 10, 11, 12, 13,
-	}
+	} // 256 bytes
 	t4 := []byte{4, 3, 2, 1}
 
 	U.Send(t1, len(t1))
 	U.Send(t2, len(t2))
-	dump(U.Update(nil, 0, 1))
-	dump(U.Update(nil, 0, 1))
+	p := U.Update(nil, 0, 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one package.")
+	}
+	if bytes.Compare(
+		p.Buffer, []byte{8, 0, 0, 1, 2, 3, 4, 8, 0, 1, 5, 6, 7, 8}) != 0 {
+		t.Error("RUDP::Update error, data package to send is wrong.")
+	}
+	dump(p)
+	p = U.Update(nil, 0, 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one package.")
+	}
+	if bytes.Compare(
+		p.Buffer, []byte{0}) != 0 {
+		t.Error("RUDP::Update error, should send a heartbeat package.")
+	}
+	dump(p)
+
 	U.Send(t3, len(t3))
 	U.Send(t4, len(t4))
-	dump(U.Update(nil, 0, 1))
+	p = U.Update(nil, 0, 1)
+	if p.Next == nil || p.Next.Next != nil {
+		t.Error("RUDP::Update error, should send two packages.")
+	}
+	if p.Size != 260 || p.Buffer[3] != 2 {
+		t.Error("RUDP::Update error, should send a package with id 2 and size 260.")
+	}
+	if bytes.Compare(
+		p.Next.Buffer, []byte{8, 0, 3, 4, 3, 2, 1}) != 0 {
+		t.Error("RUDP::Update error, data package to send is wrong.")
+	}
+	dump(p)
 
-	r1 := []byte{02, 00, 00, 02, 00, 03}
-	dump(U.Update(r1, len(r1), 1))
-	dumpRecv(U)
-	r2 := []byte{5, 0, 1, 1,
+	r1 := []byte{
+		02, 00, 00,
+		02, 00, 03,
+	}
+	p = U.Update(r1, len(r1), 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one package.")
+	}
+	if bytes.Compare(
+		p.Buffer, []byte{8, 0, 0, 1, 2, 3, 4, 8, 0, 3, 4, 3, 2, 1}) != 0 {
+		t.Error("RUDP::Update error, data package to resend is wrong.")
+	}
+	dump(p)
+	recvResult := dumpRecv(U)
+	if recvResult != "" {
+		t.Error("RUDP::Recv error, should receive nothing.")
+	}
+
+	r2 := []byte{
+		5, 0, 1, 1,
 		5, 0, 3, 3,
 	}
-	dump(U.Update(r2, len(r2), 1))
-	dumpRecv(U)
-	r3 := []byte{5, 0, 0, 0,
+	p = U.Update(r2, len(r2), 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one package.")
+	}
+	if bytes.Compare(
+		p.Buffer, []byte{2, 0, 0, 2, 0, 2}) != 0 {
+		t.Error("RUDP:Update error: should send 2 TypeRequest messages.")
+	}
+	dump(p)
+	recvResult = dumpRecv(U)
+	if recvResult != "" {
+		t.Error("RUDP::Recv error, should receive nothing.")
+	}
+
+	r3 := []byte{
+		5, 0, 0, 0,
 		5, 0, 5, 5,
 	}
-	dump(U.Update(r3, len(r3), 0))
+	p = U.Update(r3, len(r3), 0)
+	if p != nil {
+		t.Error("RUDP::Update error, should send 0 package.")
+	}
+	dump(p)
+
 	r4 := []byte{5, 0, 2, 2}
-	dump(U.Update(r4, len(r4), 1))
+	p = U.Update(r4, len(r4), 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one package.")
+	}
+	if bytes.Compare(
+		p.Buffer, []byte{2, 0, 4}) != 0 {
+		t.Error("RUDP:Update error: should send 1 TypeRequest message.")
+	}
+	dump(p)
 
-	dumpRecv(U)
+	recvResult = dumpRecv(U) // receive 0,1,2,3
+	if recvResult != "RECV 0\nRECV 1\nRECV 2\nRECV 3\n" {
+		t.Error("RUDP:Recv error: should receive 0~3 messages.")
+	}
 
-	U.Delete()
+	U = nil
 }

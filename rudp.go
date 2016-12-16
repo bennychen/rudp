@@ -11,7 +11,7 @@ import (
 const MaxPackageSize = (0x7fff - 4)
 
 const (
-	TypeIgnore = iota
+	TypeHeartbeat = iota
 	TypeCorrupt
 	TypeRequest
 	TypeMissing
@@ -56,7 +56,7 @@ func Create(sendDelay int, expiredTime int) *RUDP {
 	return u
 }
 
-// Send sends a new package out
+// Send sends a new package oue
 func (u *RUDP) Send(buffer []byte, sz int) {
 	if sz > MaxPackageSize {
 		fmt.Println("package size is too large.")
@@ -283,7 +283,7 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 		}
 
 		switch tag {
-		case TypeIgnore:
+		case TypeHeartbeat:
 			if len(u.sendAgain) == 0 {
 				u.sendAgain = append(u.sendAgain, u.recvIDMin)
 			}
@@ -298,7 +298,6 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 			}
 			id := u.getID(buffer)
 			if tag == TypeRequest {
-				fmt.Println("Request id ", id)
 				u.addRequest(id)
 			} else {
 				fmt.Println("Request missing ", id)
@@ -359,7 +358,7 @@ func (u *RUDP) genOutPackage() *RUDPPackage {
 	u.sendMessage(tmp)
 
 	if tmp.head == nil && tmp.sz == 0 {
-		tmp.buffer[0] = TypeIgnore
+		tmp.buffer[0] = TypeHeartbeat
 		tmp.sz = 1
 	}
 	u.createPackage(tmp)
