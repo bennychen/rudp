@@ -14,31 +14,31 @@ const (
 	TypeHeartbeat = iota // provider sends heartbeat to consumer to keep alive
 	TypeCorrupt          // abnormal corrupted message
 	TypeRequest          // consumer requests provider to resend message
-	TypeMissing
-	TypeNormal // provider sends normal message to consumer
+	TypeMissing          // provider tells consumer that some message is missing
+	TypeNormal           // provider sends normal message to consumer
 )
 
 type RUDP struct {
-	MTU         int // maximum transmission unit size, default 512
 	SendDelay   int // after how long we should send messages
 	ExpiredTime int // expired time that message in history should be cleared
 
+	mtu         int // maximum transmission unit size, default 512
 	sendQueue   messageQueue
 	recvQueue   messageQueue
 	sendHistroy messageQueue // keep message history in case we need to resend
 
-	sendPackage *RUDPPackage // returned by rudp_update
+	sendPackage *RUDPPackage // returned by RUDP::Update
 
-	freeList  *message // recyclable messages
-	sendAgain []uint16 // package ids to send again
+	messagePool *message
+	sendAgain   []uint16 // package ids to send again
 
-	corrupt         bool
-	currentTick     int
-	lastSendTick    int
-	lastExpiredTick int
-	currentSendID   uint16
-	recvIDMin       uint16
-	recvIDMax       uint16
+	corrupt          bool
+	currentTick      int
+	lastSendTick     int
+	lastExpiredTick  int
+	currentSendID    uint16
+	currentRecvIDMin uint16
+	currentRecvIDMax uint16
 }
 
 type RUDPPackage struct {
@@ -47,20 +47,26 @@ type RUDPPackage struct {
 	Size   int
 }
 
-func Create(sendDelay int, expiredTime int) *RUDP {
+func Create(sendDelay int, expiredTime int, mtu int) *RUDP {
 	u := &RUDP{}
-	u.MTU = 512
+	u.mtu = mtu
+	if u.mtu < 128 {
+		u.mtu = 128
+	}
 	u.SendDelay = sendDelay
 	u.ExpiredTime = expiredTime
 	u.sendAgain = make([]uint16, 0)
 	return u
 }
 
-// Send sends a new package oue
+// Send sends a new package out
 func (u *RUDP) Send(buffer []byte, sz int) {
 	if sz > MaxPackageSize {
 		fmt.Println("package size is too large.")
 		return
+	}
+	if sz > len(buffer) {
+		sz = len(buffer)
 	}
 	m := u.createMessage(buffer, sz)
 	m.id = u.currentSendID
@@ -77,11 +83,11 @@ func (u *RUDP) Recv(buffer []byte) int {
 		u.corrupt = false
 		return -1
 	}
-	m := u.recvQueue.pop(u.recvIDMin)
+	m := u.recvQueue.pop(u.currentRecvIDMin)
 	if m == nil {
 		return 0
 	}
-	u.recvIDMin++
+	u.currentRecvIDMin++
 	if m.sz > 0 {
 		copy(buffer, m.buffer)
 	}
@@ -97,6 +103,9 @@ func (u *RUDP) Recv(buffer []byte) int {
 func (u *RUDP) Update(received []byte, sz int, deltaTick int) *RUDPPackage {
 	u.currentTick += deltaTick
 	u.clearOutPackage()
+	if sz > len(received) {
+		sz = len(received)
+	}
 	u.extractPackages(received, sz)
 
 	if u.currentTick >= u.lastExpiredTick+u.ExpiredTime {
@@ -109,6 +118,16 @@ func (u *RUDP) Update(received []byte, sz int, deltaTick int) *RUDPPackage {
 		return u.sendPackage
 	}
 	return nil
+}
+
+func (u *RUDP) DebugGetPoolSize() int {
+	n := 0
+	m := u.messagePool
+	for m != nil {
+		n++
+		m = m.next
+	}
+	return n
 }
 
 type message struct {
@@ -158,20 +177,25 @@ func (u *RUDP) clearOutPackage() {
 // 1. when sending message, we create message and push to sendQueue
 // 2. when message received, we create messages and push to recvQueue
 func (u *RUDP) createMessage(buffer []byte, sz int) *message {
-	msg := u.freeList
+	msg := u.messagePool
 	if msg != nil {
-		u.freeList = msg.next
+		u.messagePool = msg.next
 		if len(msg.buffer) < sz {
 			msg.buffer = make([]byte, sz)
 		}
-	}
-	if msg == nil {
+	} else {
 		msg = &message{}
-		msg.buffer = make([]byte, sz)
+		if sz > 0 {
+			msg.buffer = make([]byte, sz)
+		} else {
+			msg.buffer = make([]byte, u.mtu)
+		}
 	}
 
 	msg.sz = sz
-	copy(msg.buffer, buffer)
+	if buffer != nil {
+		copy(msg.buffer, buffer)
+	}
 	msg.tick = 0
 	msg.id = 0
 	msg.next = nil
@@ -179,8 +203,8 @@ func (u *RUDP) createMessage(buffer []byte, sz int) *message {
 }
 
 func (u *RUDP) deleteMessage(m *message) {
-	m.next = u.freeList
-	u.freeList = m
+	m.next = u.messagePool
+	u.messagePool = m
 }
 
 func (u *RUDP) clearSendExpired(tick int) {
@@ -196,8 +220,8 @@ func (u *RUDP) clearSendExpired(tick int) {
 
 	if last != nil {
 		// free all the messages before tick
-		last.next = u.freeList
-		u.freeList = u.sendHistroy.head
+		last.next = u.messagePool
+		u.messagePool = u.sendHistroy.head
 	}
 	u.sendHistroy.head = m
 	if m == nil {
@@ -231,21 +255,20 @@ func (u *RUDP) addRequest(id uint16) {
 }
 
 func (u *RUDP) addMissing(id uint16) {
-	// TODO: understand this
 	u.insertMessageToRecvQueue(id, nil, -1)
 }
 
 func (u *RUDP) insertMessageToRecvQueue(id uint16, buffer []byte, sz int) {
-	if id < u.recvIDMin {
+	if id < u.currentRecvIDMin {
 		fmt.Printf(
 			"Failed to insert msg with id %v as it's less than current min id.\n", id)
 		return
 	}
-	if id > u.recvIDMax || u.recvQueue.head == nil {
+	if id > u.currentRecvIDMax || u.recvQueue.head == nil {
 		m := u.createMessage(buffer, sz)
 		m.id = id
 		u.recvQueue.push(m)
-		u.recvIDMax = id
+		u.currentRecvIDMax = id
 	} else {
 		m := u.recvQueue.head
 		last := &u.recvQueue.head
@@ -256,11 +279,15 @@ func (u *RUDP) insertMessageToRecvQueue(id uint16, buffer []byte, sz int) {
 				tmp.next = m
 				*last = tmp
 				return
+			} else if m.id == id {
+				// Duplicated message
+				return
 			}
 			last = &m.next
 			m = m.next
 
 			if m == nil {
+				fmt.Println("Error::Should never be here unless bug.")
 				break
 			}
 		}
@@ -288,7 +315,8 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 		switch tag {
 		case TypeHeartbeat:
 			if len(u.sendAgain) == 0 {
-				u.sendAgain = append(u.sendAgain, u.recvIDMin)
+				// request next package id
+				u.sendAgain = append(u.sendAgain, u.currentRecvIDMin)
 			}
 		case TypeCorrupt:
 			u.corrupt = true
@@ -323,19 +351,18 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 	}
 }
 
-type tmpBuffer struct {
+type mtuBuffer struct {
 	buffer []byte
 	sz     int
 	head   *RUDPPackage
 	tail   *RUDPPackage
 }
 
-func (u *RUDP) createPackage(tmp *tmpBuffer) {
+func (tmp *mtuBuffer) createEmptyPackage(sz int) *RUDPPackage {
 	p := &RUDPPackage{}
 	p.Next = nil
-	p.Buffer = make([]byte, tmp.sz)
-	p.Size = tmp.sz
-	copy(p.Buffer, tmp.buffer[:tmp.sz])
+	p.Buffer = make([]byte, sz)
+	p.Size = sz
 	if tmp.tail == nil {
 		tmp.tail = p
 		tmp.head = p
@@ -343,6 +370,14 @@ func (u *RUDP) createPackage(tmp *tmpBuffer) {
 		tmp.tail.Next = p
 		tmp.tail = p
 	}
+	return p
+}
+
+func (tmp *mtuBuffer) createPackageFromBuffer() *RUDPPackage {
+	p := tmp.createEmptyPackage(tmp.sz)
+	copy(p.Buffer, tmp.buffer[:tmp.sz])
+	tmp.sz = 0
+	return p
 }
 
 /*
@@ -352,8 +387,8 @@ func (u *RUDP) createPackage(tmp *tmpBuffer) {
 	4. send heartbeat
 */
 func (u *RUDP) genOutPackage() *RUDPPackage {
-	tmp := &tmpBuffer{}
-	tmp.buffer = make([]byte, u.MTU)
+	tmp := &mtuBuffer{}
+	tmp.buffer = make([]byte, u.mtu)
 
 	u.requestMissing(tmp)
 	u.replyRequest(tmp)
@@ -363,12 +398,13 @@ func (u *RUDP) genOutPackage() *RUDPPackage {
 		tmp.buffer[0] = TypeHeartbeat
 		tmp.sz = 1
 	}
-	u.createPackage(tmp)
+	tmp.createPackageFromBuffer()
 	return tmp.head
 }
 
-func (u *RUDP) requestMissing(tmp *tmpBuffer) {
-	id := u.recvIDMin
+// consumer requests missing packets
+func (u *RUDP) requestMissing(tmp *mtuBuffer) {
+	id := u.currentRecvIDMin
 	m := u.recvQueue.head
 	for m != nil {
 		if m.id > id {
@@ -381,14 +417,11 @@ func (u *RUDP) requestMissing(tmp *tmpBuffer) {
 	}
 }
 
-func (u *RUDP) replyRequest(tmp *tmpBuffer) {
+// provider replies missing packets requests from consumer
+func (u *RUDP) replyRequest(tmp *mtuBuffer) {
 	history := u.sendHistroy.head
 	for i := 0; i < len(u.sendAgain); i++ {
 		id := u.sendAgain[i]
-		if id < u.recvIDMin {
-			// already received, ignore
-			continue
-		}
 		for {
 			if history == nil || id < history.id {
 				// expired
@@ -405,7 +438,7 @@ func (u *RUDP) replyRequest(tmp *tmpBuffer) {
 	u.sendAgain = make([]uint16, 0)
 }
 
-func (u *RUDP) sendMessage(tmp *tmpBuffer) {
+func (u *RUDP) sendMessage(tmp *mtuBuffer) {
 	m := u.sendQueue.head
 	for m != nil {
 		u.packMessage(tmp, m)
@@ -424,45 +457,38 @@ func (u *RUDP) sendMessage(tmp *tmpBuffer) {
 	}
 }
 
-func (u *RUDP) packRequest(tmp *tmpBuffer, id uint16, tag int) {
-	sz := u.MTU - tmp.sz
+func (u *RUDP) packRequest(tmp *mtuBuffer, id uint16, tag int) {
+	sz := u.mtu - tmp.sz
 	if sz < 3 {
-		u.createPackage(tmp)
+		tmp.createPackageFromBuffer()
 	}
 	buffer := tmp.buffer[tmp.sz:]
 	tmp.sz += u.fillHeader(buffer, tag, id)
 }
 
-func (u *RUDP) packMessage(tmp *tmpBuffer, m *message) {
-	sz := u.MTU - tmp.sz
-	if m.sz > u.MTU-4 {
+func (u *RUDP) packMessage(tmp *mtuBuffer, m *message) {
+	if m.sz > u.mtu-4 {
 		if tmp.sz > 0 {
-			u.createPackage(tmp)
+			tmp.createPackageFromBuffer()
 		}
 		// big package
-		sz = 4 + m.sz
-		p := &RUDPPackage{}
+		sz := 4 + m.sz
+		p := tmp.createEmptyPackage(sz)
 		p.Next = nil
 		p.Buffer = make([]byte, sz)
 		p.Size = sz
 		u.fillHeader(p.Buffer, m.sz+TypeNormal, m.id)
 		copy(p.Buffer[4:], m.buffer[:m.sz])
-		if tmp.tail == nil {
-			tmp.head = p
-			tmp.tail = p
-		} else {
-			tmp.tail.Next = p
-			tmp.tail = p
-		}
 		return
 	}
-	if sz < 4+m.sz {
-		u.createPackage(tmp)
+	// the remaining size is not enough to hold the message
+	if u.mtu-tmp.sz < 4+m.sz {
+		tmp.createPackageFromBuffer()
 	}
 	buf := tmp.buffer[tmp.sz:]
 	length := u.fillHeader(buf, m.sz+TypeNormal, m.id)
-	tmp.sz += length + m.sz
 	copy(buf[length:], m.buffer[:m.sz])
+	tmp.sz += length + m.sz
 }
 
 func (u *RUDP) fillHeader(buffer []byte, length int, id uint16) int {
