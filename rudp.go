@@ -20,9 +20,9 @@ const (
 
 type RUDP struct {
 	SendDelay   int // after how long we should send messages
-	ExpiredTime int // expired time that message in history should be cleared
+	ExpiredTime int // after how long messages in history should be cleared
 
-	mtu         int // maximum transmission unit size, best value 512
+	mtu         int // maximum transmission unit size, recommended value 512
 	sendQueue   messageQueue
 	recvQueue   messageQueue
 	sendHistroy messageQueue // keep message history in case we need to resend
@@ -76,7 +76,7 @@ func (u *RUDP) Send(buffer []byte, sz int) {
 
 // Recv receives package and returns the size of the new package
 // 0 = no new package
-// -1 = corrupt connection
+// -1 = corrupted connection
 func (u *RUDP) Recv(buffer []byte) int {
 	if u.corrupt {
 		u.corrupt = false
