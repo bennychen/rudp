@@ -26,11 +26,10 @@ type RUDP struct {
 	sendQueue   messageQueue
 	recvQueue   messageQueue
 	sendHistroy messageQueue // keep message history in case we need to resend
+	messagePool *message
 
 	sendPackage *RUDPPackage // returned by RUDP::Update
-
-	messagePool *message
-	sendAgain   []uint16 // package ids to send again
+	sendAgain   []uint16     // package ids to send again
 
 	corrupt          bool
 	currentTick      int
@@ -97,7 +96,7 @@ func (u *RUDP) Recv(buffer []byte) int {
 
 // Update should be called every frame with the time tick,
 // or when a new package is coming.
-// buffer is the actual udp package we received
+// received is the actual udp package we received
 // sz is the size of the package
 // the package returned from this function should be sent out.
 func (u *RUDP) Update(received []byte, sz int, deltaTick int) *RUDPPackage {
@@ -229,25 +228,17 @@ func (u *RUDP) clearSendExpired(tick int) {
 	}
 }
 
-// TODO: understand and make sure this function works
-func (u *RUDP) getID(buffer []byte) uint16 {
-	id := binary.BigEndian.Uint16(buffer)
-	/*
-		// if the diff of id is larger than 32K(0x8000), then adjust the id
-		var recvMaxID uint16 = uint16(u.recvIDMax)
-		if id > recvMaxID && id-recvMaxID > 0x8000 {
-			id -= 0x10000
-		} else if id < recvMaxID && recvMaxID-id > 0x8000 {
+func compareID(srcID uint16, destID uint16) int {
+	src := int(srcID)
+	dest := int(destID)
+	if src-dest > 0x8000 || src-dest < -0x8000 {
+		return dest - src
+	}
+	return src - dest
+}
 
-		}
-		if id < uint(u.recvIDMax)-0x8000 {
-			id += 0x10000
-		} else if id > uint(u.recvIDMax)+0x8000 {
-			id -= 0x10000
-		}
-		return int(id)
-	*/
-	return id
+func (u *RUDP) getID(buffer []byte) uint16 {
+	return binary.BigEndian.Uint16(buffer)
 }
 
 func (u *RUDP) addRequest(id uint16) {
@@ -259,12 +250,12 @@ func (u *RUDP) addMissing(id uint16) {
 }
 
 func (u *RUDP) insertMessageToRecvQueue(id uint16, buffer []byte, sz int) {
-	if id < u.currentRecvIDMin {
+	if compareID(id, u.currentRecvIDMin) < 0 {
 		fmt.Printf(
 			"Failed to insert msg with id %v as it's less than current min id.\n", id)
 		return
 	}
-	if id > u.currentRecvIDMax || u.recvQueue.head == nil {
+	if compareID(id, u.currentRecvIDMax) > 0 || u.recvQueue.head == nil {
 		m := u.createMessage(buffer, sz)
 		m.id = id
 		u.recvQueue.push(m)
@@ -273,7 +264,7 @@ func (u *RUDP) insertMessageToRecvQueue(id uint16, buffer []byte, sz int) {
 		m := u.recvQueue.head
 		last := &u.recvQueue.head
 		for {
-			if m.id > id {
+			if compareID(m.id, id) > 0 {
 				tmp := u.createMessage(buffer, sz)
 				tmp.id = id
 				tmp.next = m
@@ -409,8 +400,8 @@ func (u *RUDP) requestMissing(tmp *tmpBuffer) {
 	id := u.currentRecvIDMin
 	m := u.recvQueue.head
 	for m != nil {
-		if m.id > id {
-			for i := id; i < m.id; i++ {
+		if compareID(m.id, id) > 0 {
+			for i := id; compareID(i, m.id) < 0; i++ {
 				u.packRequest(tmp, i, TypeRequest)
 			}
 		}
@@ -425,7 +416,7 @@ func (u *RUDP) replyRequest(tmp *tmpBuffer) {
 	for i := 0; i < len(u.sendAgain); i++ {
 		id := u.sendAgain[i]
 		for {
-			if history == nil || id < history.id {
+			if history == nil || compareID(id, history.id) < 0 {
 				// expired
 				u.packRequest(tmp, id, TypeMissing)
 				break

@@ -442,14 +442,19 @@ func TestSendBigMessage(t *testing.T) {
 	U.Send(t0, len(t0))
 	p = U.Update(nil, 0, 1)
 	if p == nil || p.Next == nil || p.Size != 5 || p.Next.Size != 123 {
-		t.Error("RUDP::Update error, should send two packages.")
+		t.Error("RUDP::Update error, should send 2 packages.")
 	}
 	dump(p)
 
-	// send large package with requests
+	// send one tiny package and
+	U.Send([]byte{0}, 1)
+	U.Send(t2, len(t2))
+	p = U.Update(nil, 0, 1)
+	dump(p)
 	r := []byte{
 		5, 0, 100, 2,
 	}
+	// send large package with requests
 	p = U.Update(r, len(r), 1)
 	if p == nil || p.Next == nil || p.Next.Next == nil {
 		t.Error("RUDP::Update error, should send 3 packages.")
