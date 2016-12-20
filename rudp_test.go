@@ -222,7 +222,7 @@ func TestRecvHeartbeat(t *testing.T) {
 
 func TestCorrupt(t *testing.T) {
 	fmt.Println("=======================TestCorrupt======================")
-	U := rudp.Create(1, 5, 128)
+	U := rudp.Create(1, 5, 0)
 	r1 := []byte{
 		1, 0, 0, 0,
 	}
@@ -235,7 +235,7 @@ func TestCorrupt(t *testing.T) {
 	r2 := []byte{
 		200,
 	}
-	U.Update(r2, len(r2), 1)
+	U.Update(r2, 100, 1)
 	str = dumpRecv(U)
 	if str != "CORRUPT\n" {
 		t.Error("Should get a corrupt signal.")
@@ -258,6 +258,8 @@ func TestCorrupt(t *testing.T) {
 	if str != "CORRUPT\n" {
 		t.Error("Should get a corrupt signal.")
 	}
+
+	U.Send([]byte{1}, 100)
 }
 
 func TestExpiration(t *testing.T) {
@@ -397,7 +399,7 @@ func TestSendBigMessage(t *testing.T) {
 	idx = 0
 	U := rudp.Create(1, 5, 128)
 
-	t1 := []byte{
+	t0 := []byte{
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
@@ -405,9 +407,12 @@ func TestSendBigMessage(t *testing.T) {
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
 		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 3,
-		2, 1, 1, 1, 1, 1, 1, 3, 2, 1, 1, 1,
-	} // 124 bytes
-	t2 := append(t1, 3) // 125 bytes
+		2, 1, 1, 1, 1, 1, 1, 3,
+	} // 120 bytes
+	t1 := append(t0, 2, 1, 1, 1)
+	t2 := append(t1, 4) // 125 bytes
+
+	// send one package that is exactly mtu
 	U.Send(t1, len(t1))
 	p := U.Update(nil, 0, 1)
 	dump(p)
@@ -415,26 +420,39 @@ func TestSendBigMessage(t *testing.T) {
 		t.Error("RUDP::Update error, should only send one mtu-size package.")
 	}
 
+	// send one package slightly larger than mtu
 	U.Send(t2, len(t2))
 	p = U.Update(nil, 0, 1)
 	dump(p)
-	if p == nil || p.Next != nil || p.Size != 128 {
-		t.Error("RUDP::Update error, should only send one mtu-size package.")
+	if p == nil || p.Next != nil || p.Size != 129 {
+		t.Error("RUDP::Update error, should only send one package.")
 	}
 
-	U.Send([]byte{0}, 1)
-	U.Send(t1, len(t1))
+	// send one tiny package first and then one large one to fill mtu
+	U.Send([]byte{9}, 1)
+	U.Send(t0, len(t0))
 	p = U.Update(nil, 0, 1)
+	if p == nil || p.Next != nil {
+		t.Error("RUDP::Update error, should only send one mtu-size package.")
+	}
 	dump(p)
 
-	U.Send([]byte{0}, 1)
-	U.Send(t2, len(t2))
+	// send one tiny package first and then one large one to slightly outrun mtu
+	U.Send([]byte{9, 9}, 2)
+	U.Send(t0, len(t0))
 	p = U.Update(nil, 0, 1)
+	if p == nil || p.Next == nil || p.Size != 5 || p.Next.Size != 123 {
+		t.Error("RUDP::Update error, should send two packages.")
+	}
 	dump(p)
 
+	// send large package with requests
 	r := []byte{
 		5, 0, 100, 2,
 	}
 	p = U.Update(r, len(r), 1)
+	if p == nil || p.Next == nil || p.Next.Next == nil {
+		t.Error("RUDP::Update error, should send 3 packages.")
+	}
 	dump(p)
 }

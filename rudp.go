@@ -22,7 +22,7 @@ type RUDP struct {
 	SendDelay   int // after how long we should send messages
 	ExpiredTime int // expired time that message in history should be cleared
 
-	mtu         int // maximum transmission unit size, default 512
+	mtu         int // maximum transmission unit size, best value 512
 	sendQueue   messageQueue
 	recvQueue   messageQueue
 	sendHistroy messageQueue // keep message history in case we need to resend
@@ -398,7 +398,9 @@ func (u *RUDP) genOutPackage() *RUDPPackage {
 		tmp.buffer[0] = TypeHeartbeat
 		tmp.sz = 1
 	}
-	tmp.createPackageFromBuffer()
+	if tmp.sz > 0 {
+		tmp.createPackageFromBuffer()
+	}
 	return tmp.head
 }
 
