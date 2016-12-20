@@ -12,17 +12,21 @@ The following functions are provided:
 **Create**
 
 creates a RUDP object
+
 - sendDelay: after how long we should send messages
+
 - expiredTime: after how long messages in history should be cleared
 
 **Send**
 
-sends a new package out
+sends a new message out
 
 **Recv**
 
-receives package and returns the size of the new package
-if 0 returned, there is no new package
+receives message and returns the size of the new message
+
+if 0 returned, there is no new mesasge
+
 if -1 returned, it's a corrupted connection
 
 **Update**
@@ -30,6 +34,7 @@ if -1 returned, it's a corrupted connection
 should be called every frame with the time tick, or when a new package is coming.
 
 - received: the actual UDP package we received
+
 - sz: the size of the package
 
 the package returned from this function should be sent out with UDP.
@@ -58,7 +63,7 @@ RUDP object is both a provider & consumer. When RUDP is sending message out, it 
 
 ## Message ID
 
-Each message is with a 16bit ID, starting from 0. As we need to circulate the id when it reaches 0xffff, I implemented a function called `compareID` for the case when id reaches max.
+Each message is with a uint16 ID, starting from 0. As we need to circulate the id when it reaches 0xffff, a function called `compareID` is implemented for the case when id reaches max uint16.
 
 For example, if an old id is 0xfffe, a new id is 3, 0xfffe is larger than 3, but here we know that 3 is newer than 0xfffe, so `compareID` function ensures that 3 is larger than 0xfffe in our case. This makes sure that these IDs are still in correct order in this corner case.
 

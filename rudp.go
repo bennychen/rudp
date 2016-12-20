@@ -74,8 +74,8 @@ func (u *RUDP) Send(buffer []byte, sz int) {
 	u.sendQueue.push(m)
 }
 
-// Recv receives package and returns the size of the new package
-// 0 = no new package
+// Recv receives message and returns the size of the new message
+// 0 = no new message
 // -1 = corrupted connection
 func (u *RUDP) Recv(buffer []byte) int {
 	if u.corrupt {
