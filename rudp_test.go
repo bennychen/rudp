@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"encoding/binary"
+
 	"github.com/bennychen/rudp"
 )
 
@@ -458,6 +460,31 @@ func TestSendBigMessage(t *testing.T) {
 	p = U.Update(r, len(r), 1)
 	if p == nil || p.Next == nil || p.Next.Next == nil {
 		t.Error("RUDP::Update error, should send 3 packages.")
+	}
+	dump(p)
+}
+
+func TestBigID(t *testing.T) {
+	fmt.Println("=======================TestBigID======================")
+
+	idx = 0
+	U := rudp.Create(1, 5, 128)
+
+	tmp := make([]byte, rudp.MaxPackageSize)
+	for i := 0; i < 0xfffe; i++ {
+		t1 := []byte{5, 0, 0}
+		binary.BigEndian.PutUint16(t1[1:], uint16(i))
+		t1 = append(t1, byte(i))
+		U.Update(t1, len(t1), 1)
+		U.Recv(tmp)
+	}
+
+	t1 := []byte{5, 0, 2, 2}
+	p := U.Update(t1, len(t1), 1)
+	if p == nil || p.Next != nil ||
+		bytes.Compare(p.Buffer,
+			[]byte{02, 0xff, 0xfe, 02, 0xff, 0xff, 02, 00, 00, 02, 00, 01}) != 0 {
+		t.Error("RUDP::Update error, should send 1 package with 4 requests.")
 	}
 	dump(p)
 }
