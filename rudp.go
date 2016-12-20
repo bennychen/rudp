@@ -351,14 +351,14 @@ func (u *RUDP) extractPackages(buffer []byte, sz int) {
 	}
 }
 
-type mtuBuffer struct {
+type tmpBuffer struct {
 	buffer []byte
 	sz     int
 	head   *RUDPPackage
 	tail   *RUDPPackage
 }
 
-func (tmp *mtuBuffer) createEmptyPackage(sz int) *RUDPPackage {
+func (tmp *tmpBuffer) createEmptyPackage(sz int) *RUDPPackage {
 	p := &RUDPPackage{}
 	p.Next = nil
 	p.Buffer = make([]byte, sz)
@@ -373,7 +373,7 @@ func (tmp *mtuBuffer) createEmptyPackage(sz int) *RUDPPackage {
 	return p
 }
 
-func (tmp *mtuBuffer) createPackageFromBuffer() *RUDPPackage {
+func (tmp *tmpBuffer) createPackageFromBuffer() *RUDPPackage {
 	p := tmp.createEmptyPackage(tmp.sz)
 	copy(p.Buffer, tmp.buffer[:tmp.sz])
 	tmp.sz = 0
@@ -387,7 +387,7 @@ func (tmp *mtuBuffer) createPackageFromBuffer() *RUDPPackage {
 	4. send heartbeat
 */
 func (u *RUDP) genOutPackage() *RUDPPackage {
-	tmp := &mtuBuffer{}
+	tmp := &tmpBuffer{}
 	tmp.buffer = make([]byte, u.mtu)
 
 	u.requestMissing(tmp)
@@ -403,7 +403,7 @@ func (u *RUDP) genOutPackage() *RUDPPackage {
 }
 
 // consumer requests missing packets
-func (u *RUDP) requestMissing(tmp *mtuBuffer) {
+func (u *RUDP) requestMissing(tmp *tmpBuffer) {
 	id := u.currentRecvIDMin
 	m := u.recvQueue.head
 	for m != nil {
@@ -418,7 +418,7 @@ func (u *RUDP) requestMissing(tmp *mtuBuffer) {
 }
 
 // provider replies missing packets requests from consumer
-func (u *RUDP) replyRequest(tmp *mtuBuffer) {
+func (u *RUDP) replyRequest(tmp *tmpBuffer) {
 	history := u.sendHistroy.head
 	for i := 0; i < len(u.sendAgain); i++ {
 		id := u.sendAgain[i]
@@ -438,7 +438,7 @@ func (u *RUDP) replyRequest(tmp *mtuBuffer) {
 	u.sendAgain = make([]uint16, 0)
 }
 
-func (u *RUDP) sendMessage(tmp *mtuBuffer) {
+func (u *RUDP) sendMessage(tmp *tmpBuffer) {
 	m := u.sendQueue.head
 	for m != nil {
 		u.packMessage(tmp, m)
@@ -457,7 +457,7 @@ func (u *RUDP) sendMessage(tmp *mtuBuffer) {
 	}
 }
 
-func (u *RUDP) packRequest(tmp *mtuBuffer, id uint16, tag int) {
+func (u *RUDP) packRequest(tmp *tmpBuffer, id uint16, tag int) {
 	sz := u.mtu - tmp.sz
 	if sz < 3 {
 		tmp.createPackageFromBuffer()
@@ -466,7 +466,7 @@ func (u *RUDP) packRequest(tmp *mtuBuffer, id uint16, tag int) {
 	tmp.sz += u.fillHeader(buffer, tag, id)
 }
 
-func (u *RUDP) packMessage(tmp *mtuBuffer, m *message) {
+func (u *RUDP) packMessage(tmp *tmpBuffer, m *message) {
 	if m.sz > u.mtu-4 {
 		if tmp.sz > 0 {
 			tmp.createPackageFromBuffer()

@@ -432,12 +432,9 @@ func TestSendBigMessage(t *testing.T) {
 	p = U.Update(nil, 0, 1)
 	dump(p)
 
-	/*
-		r1 := []byte{5, 0, 1, 1}
-		t2 := []byte{
-			2, 2, 2, 2, 2,
-		}
-		U.Send(t2, len(t2))
-		dump(U.Update(r1, len(r1), 1))
-	*/
+	r := []byte{
+		5, 0, 100, 2,
+	}
+	p = U.Update(r, len(r), 1)
+	dump(p)
 }
