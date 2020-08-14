@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "composite": true,
+    "declaration": true,
+    "target": "es5",
+    "experimentalDecorators": true,
+    "sourceMap": true,
+    "rootDir": "./",
+    "outDir": "./bin",
+    "removeComments": true
+  },
+  "exclude": ["./bin"]
+}
