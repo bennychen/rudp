@@ -1,6 +1,6 @@
 ## About
 
-This is a go transplant of a RUDP implementation, originally written in C by the lengendary developer cloudwu from China.
+This is a go/csharp/typescript transplant of a RUDP implementation, originally written in C by the lengendary developer cloudwu from China.
 
 The original algorithm explaination is at [cloudwu's blog](http://blog.codingnow.com/2016/03/reliable_udp.html) (In Chinese)
 and [here](https://github.com/cloudwu/rudp) is the source c code repo.
