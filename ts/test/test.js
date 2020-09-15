@@ -1,4 +1,4 @@
-var rudp = require('../bin/rudp');
+var { Rudp } = require('../bin/rudp');
 var assert = require('assert');
 
 var idx = 0;
@@ -16,11 +16,11 @@ function DumpAndDestroy(p) {
   str += '\n';
   console.log(str);
   idx++;
-  rudp.RudpPackage.returnRecursively(p);
+  Rudp.RudpPackage.returnRecursively(p);
 }
 
 function DumpRecv(u) {
-  var tmp = new Uint8Array(rudp.Rudp.MaxPackageSize);
+  var tmp = new Uint8Array(Rudp.Rudp.MaxPackageSize);
   var n = u.recv(tmp);
   var str = '';
   while (n != 0) {
@@ -70,7 +70,7 @@ function isNull(val, msg) {
 
 describe('rudp tests', function () {
   it('correct path', function () {
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
     var t1 = new Uint8Array([1, 2, 3, 4]);
     var t2 = new Uint8Array([5, 6, 7, 8]);
 
@@ -361,7 +361,7 @@ describe('rudp tests', function () {
     assert.equal(
       arrayEqual(
         p.buffer.subarray(0, p.size),
-        new Uint8Array([rudp.Rudp.TypeHeartbeat])
+        new Uint8Array([Rudp.Rudp.TypeHeartbeat])
       ),
       true,
       'RUDP::update error, data package to send is wrong.'
@@ -412,10 +412,10 @@ describe('rudp tests', function () {
       arrayEqual(
         p.buffer.subarray(p.size),
         new Uint8Array([
-          rudp.Rudp.TypeRequest,
+          Rudp.Rudp.TypeRequest,
           0,
           0,
-          rudp.Rudp.TypeRequest,
+          Rudp.Rudp.TypeRequest,
           0,
           2,
         ])
@@ -440,10 +440,10 @@ describe('rudp tests', function () {
       arrayEqual(
         p.buffer.subarray(p.size),
         new Uint8Array([
-          rudp.Rudp.TypeRequest,
+          Rudp.Rudp.TypeRequest,
           0,
           2,
-          rudp.Rudp.TypeRequest,
+          Rudp.Rudp.TypeRequest,
           0,
           4,
         ])
@@ -458,7 +458,7 @@ describe('rudp tests', function () {
     isTrue(
       arrayEqual(
         p.buffer.subarray(p.size),
-        new Uint8Array([rudp.Rudp.TypeRequest, 0, 4])
+        new Uint8Array([Rudp.Rudp.TypeRequest, 0, 4])
       ),
       'RUDP:update error: should send 1 TypeRequest message.'
     );
@@ -475,7 +475,7 @@ describe('rudp tests', function () {
 
   it('test expiration', function () {
     idx = 0;
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
     var t1 = new Uint8Array([1, 2, 3, 4]);
     U.send(t1, t1.length);
     DumpAndDestroy(U.update(null, 0, 5));
@@ -487,7 +487,7 @@ describe('rudp tests', function () {
         !p.next &&
         arrayEqual(
           p.buffer.subarray(p.Size),
-          new Uint8Array([rudp.Rudp.TypeMissing, 0, 0])
+          new Uint8Array([Rudp.Rudp.TypeMissing, 0, 0])
         ),
       'RUDP::Update error, should send only send 1 TypeMissing msg.'
     );
@@ -496,18 +496,18 @@ describe('rudp tests', function () {
 
   it('test add missing', function () {
     idx = 0;
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
     var r1 = new Uint8Array([5, 0, 1, 1]);
     DumpAndDestroy(U.update(r1, r1.length, 1));
 
-    var r2 = new Uint8Array([rudp.Rudp.TypeMissing, 0, 0]);
+    var r2 = new Uint8Array([Rudp.Rudp.TypeMissing, 0, 0]);
     var p = U.update(r2, r2.Length, 1);
     isTrue(
       p.buffer &&
         !p.next &&
         arrayEqual(
           p.buffer.subarray(p.size),
-          new Uint8Array([rudp.Rudp.TypeHeartbeat])
+          new Uint8Array([Rudp.Rudp.TypeHeartbeat])
         ),
       'RUDP::Update error, should send only send 1 heartbeat msg.'
     );
@@ -778,14 +778,14 @@ describe('rudp tests', function () {
       13,
     ]);
 
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
     U.update(r, r.length, 1);
     DumpRecv(U);
   });
 
   it('test send big message', function () {
     idx = 0;
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
 
     var t0 = [];
     var bytes = new Uint8Array([
@@ -981,13 +981,13 @@ describe('rudp tests', function () {
 
   it('test big ID', function () {
     idx = 0;
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
 
-    var tmp = new Uint8Array(rudp.Rudp.MaxPackageSize);
+    var tmp = new Uint8Array(Rudp.Rudp.MaxPackageSize);
     for (var i = 0; i < 0xfffe; i++) {
       var t = new Uint8Array([5, 0, 0, 0]);
       var idData = getUint8Bytes(0xffff & i);
-      rudp.RudpHelper.blockCopy(idData, 0, t, 1, idData.length);
+      Rudp.RudpHelper.blockCopy(idData, 0, t, 1, idData.length);
       U.update(t, t.length, 1);
       U.recv(tmp);
     }
@@ -1008,7 +1008,7 @@ describe('rudp tests', function () {
 
   it('test message pool', function () {
     idx = 0;
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
 
     var r1 = new Uint8Array([5, 0, 0, 0, 5, 0, 1, 1, 5, 0, 2, 2]);
     DumpAndDestroy(U.update(r1, r1.length, 0));
@@ -1044,14 +1044,14 @@ describe('rudp tests', function () {
   });
 
   it('test recv heartbeat', function () {
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
     var r = new Uint8Array([0]);
     U.update(r, r.Length, 1);
     DumpRecv(U);
   });
 
   it('test corrupt', function () {
-    var U = new rudp.Rudp(1, 5, 0);
+    var U = new Rudp.Rudp(1, 5, 0);
     var r1 = new Uint8Array([1, 0, 0, 0]);
     U.update(r1, r1.length, 1);
     var str = DumpRecv(U);
@@ -1079,17 +1079,17 @@ describe('rudp tests', function () {
   });
 
   it('test large package', function () {
-    var U = new rudp.Rudp(1, 5, 128);
+    var U = new Rudp.Rudp(1, 5, 128);
 
-    var buf = new Uint8Array(rudp.Rudp.MaxPackageSize - 4);
+    var buf = new Uint8Array(Rudp.Rudp.MaxPackageSize - 4);
     U.send(buf, buf.length);
     var p = U.update(null, 0, 1);
     isTrue(
-      p && p.size == rudp.Rudp.MaxPackageSize,
+      p && p.size == Rudp.Rudp.MaxPackageSize,
       'RUDP::Update error, should send a normal package.'
     );
 
-    buf = new Uint8Array(rudp.Rudp.MaxPackageSize - 3);
+    buf = new Uint8Array(Rudp.Rudp.MaxPackageSize - 3);
     var ret = U.send(buf, buf.length);
     assert.equal(ret, 1, 'should send message failed');
     p = U.update(null, 0, 1);
@@ -1098,7 +1098,7 @@ describe('rudp tests', function () {
         !p.next &&
         arrayEqual(
           p.buffer.subarray(p.size),
-          new Uint8Array([rudp.Rudp.TypeHeartbeat])
+          new Uint8Array([Rudp.Rudp.TypeHeartbeat])
         ),
       'RUDP::Update error, should send only send 1 heartbeat msg.'
     );

@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
     "composite": true,
+    "module": "amd",
     "declaration": true,
-    "target": "es5",
+    "target": "es6",
     "experimentalDecorators": true,
     "sourceMap": true,
     "rootDir": "./",
-    "outDir": "./bin",
+    "outFile": "./bin/rudp.js",
     "removeComments": true
   },
   "exclude": ["./bin"]
