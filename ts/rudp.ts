@@ -47,7 +47,7 @@ namespace Rudp {
   }
 
   export class Rudp {
-    public static readonly MaxPackageSize: number = 512;
+    public static MaxPackageSize: number = 1200;
 
     //  provider sends heartbeat to consumer to keep alive
     public static readonly TypeHeartbeat: number = 0;
@@ -179,6 +179,7 @@ namespace Rudp {
         this._messagePool = msg.next;
         if (msg.buffer.length < sz) {
           console.error('Message size is too big.');
+          return null;
         }
       } else {
         msg = new RudpMessage();
@@ -364,7 +365,7 @@ namespace Rudp {
       }
 
       if (this._tempBuffer.sz > 0) {
-        this._tempBuffer.createPackageFromBuffer();
+        this._tempBuffer.appendPackageFromBuffer();
       }
 
       return this._tempBuffer.head;
@@ -448,7 +449,7 @@ namespace Rudp {
     private PackRequest(tmp: RudpTempBuffer, id: number, tag: number) {
       const sz: number = this._mtu - tmp.sz;
       if (sz < 3) {
-        tmp.createPackageFromBuffer();
+        tmp.appendPackageFromBuffer();
       }
 
       tmp.sz = tmp.sz + this.fillHeader(tmp.buffer, tmp.sz, tag, id);
@@ -457,12 +458,12 @@ namespace Rudp {
     private packMessage(tmp: RudpTempBuffer, m: RudpMessage) {
       if (m.sz > this._mtu - 4) {
         if (tmp.sz > 0) {
-          tmp.createPackageFromBuffer();
+          tmp.appendPackageFromBuffer();
         }
 
         //  big package
         const sz: number = 4 + m.sz;
-        const p = tmp.createEmptyPackage(sz);
+        const p = tmp.appendEmptyPackage(sz);
         p.next = null;
         p.size = sz;
         this.fillHeader(p.buffer, 0, m.sz + Rudp.TypeNormal, m.id);
@@ -472,7 +473,7 @@ namespace Rudp {
 
       //  the remaining size is not enough to hold the message
       if (this._mtu - tmp.sz < 4 + m.sz) {
-        tmp.createPackageFromBuffer();
+        tmp.appendPackageFromBuffer();
       }
 
       const length: number = this.fillHeader(
@@ -577,7 +578,11 @@ namespace Rudp {
         srcOffset + count < 0 ||
         srcOffset + count > src.length
       ) {
-        throw new Error('blockCopy::array out of bounds');
+        throw new Error(
+          `blockCopy::array out of bounds [${dstOffset + count}>${
+            dst.length
+          }]/[${srcOffset + count}>${src.length}]`
+        );
       }
       for (let i = 0; i < count; i++) {
         dst[dstOffset + i] = src[srcOffset + i];
@@ -642,10 +647,10 @@ namespace Rudp {
       this.tail = null;
     }
 
-    public createEmptyPackage(sz: number): RudpPackage {
+    public appendEmptyPackage(sz: number): RudpPackage {
       const p: RudpPackage = RudpPackage.take();
       p.next = null;
-      p.size = this.sz;
+      p.size = sz;
       if (!this.tail) {
         this.tail = p;
         this.head = p;
@@ -657,8 +662,8 @@ namespace Rudp {
       return p;
     }
 
-    public createPackageFromBuffer(): RudpPackage {
-      const p: RudpPackage = this.createEmptyPackage(this.sz);
+    public appendPackageFromBuffer(): RudpPackage {
+      const p: RudpPackage = this.appendEmptyPackage(this.sz);
       RudpHelper.blockCopy(this.buffer, 0, p.buffer, 0, this.sz);
       this.sz = 0;
       return p;

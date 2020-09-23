@@ -106,8 +106,7 @@ public static class RudpHelper
 
 public class Rudp
 {
-  public const int MaxPackageSize = 512;
-
+  public const int MaxPackageSize = 1200;
   public const int TypeHeartbeat = 0;       // provider sends heartbeat to consumer to keep alive
   public const int TypeCorrupt = 1;         // abnormal corrupted message
   public const int TypeRequest = 2;         // consumer requests provider to resend message
